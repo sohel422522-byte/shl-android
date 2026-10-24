@@ -20,7 +20,9 @@ jobs:
         with:
           gradle-version: 8.9
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace -Pabis="${{ github.event.inputs.abis || 'arm64-v8a' }}"
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon --console=plain --stacktrace -Pabis="${{ github.event.inputs.abis || 'arm64-v8a' }}" 2>&1 | tee build.log
       - name: Show APK size
         run: |
           ls -lh app/build/outputs/apk/debug/*.apk
@@ -29,3 +31,18 @@ jobs:
         with:
           name: SHL-Downloader-APK
           path: app/build/outputs/apk/debug/*.apk
+      - name: Put the errors on the summary page (copy and send them)
+        if: failure()
+        run: |
+          {
+            echo "## Build errors - copy this box and send it"
+            echo '```'
+            grep -n -E "^e: |error:|What went wrong|Execution failed|Could not |A problem occurred|Caused by|Unresolved|Duplicate|AAPT|Manifest merger|requires libraries" -A4 build.log | head -90
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the full log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
