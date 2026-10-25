@@ -7,11 +7,26 @@ on:
       abis:
         description: "CPU types (arm64-v8a fits almost every phone and gives the smallest APK; old 32-bit phones: arm64-v8a,armeabi-v7a)"
         default: "arm64-v8a"
+      ytdl:
+        description: "yt-dlp engine library version (0.17.3 is the one other apps use; if YouTube fails try 0.18.+)"
+        default: "0.17.3"
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Unpack and check the project files
+        run: |
+          if [ -f project.tar.gz ]; then tar xzf project.tar.gz; echo "Unpacked project.tar.gz"; fi
+          if [ ! -f app/build.gradle.kts ] || [ ! -f app/src/main/AndroidManifest.xml ]; then
+            {
+              echo "## The 'app' folder is missing from the repository"
+              echo "Upload the file project.tar.gz (easiest) or the whole app folder to the repository root, then run again."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::The app folder is missing. Upload project.tar.gz (or the whole app folder) to the repository root."
+            exit 1
+          fi
+          echo "app files found: $(find app -type f | wc -l)"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -20,7 +35,9 @@ jobs:
         with:
           gradle-version: 8.9
       - name: Build debug APK
-        run: gradle assembleDebug --no-daemon --stacktrace -Pabis="${{ github.event.inputs.abis || 'arm64-v8a' }}"
+        run: |
+          set -o pipefail
+          gradle assembleDebug --no-daemon --console=plain --stacktrace -Pabis="${{ github.event.inputs.abis || 'arm64-v8a' }}" -PytdlVersion="${{ github.event.inputs.ytdl || '0.17.3' }}" 2>&1 | tee build.log
       - name: Show APK size
         run: |
           ls -lh app/build/outputs/apk/debug/*.apk
@@ -29,3 +46,18 @@ jobs:
         with:
           name: SHL-Downloader-APK
           path: app/build/outputs/apk/debug/*.apk
+      - name: Put the errors on the summary page (copy and send them)
+        if: failure()
+        run: |
+          {
+            echo "## Build errors - copy this box and send it"
+            echo '```'
+            grep -n -E "^e: |error:|What went wrong|Execution failed|Could not |A problem occurred|Caused by|Unresolved|Duplicate|AAPT|Manifest merger|requires libraries" -A4 build.log | head -90
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Keep the full log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
